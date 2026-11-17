@@ -1,0 +1,25 @@
+# 依赖 / 虚拟环境
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# 模型与缓存（体积大，不放进仓库，用程序内的「模型」页下载）
+models/
+cache/
+
+# 构建产物
+build/
+dist/
+dist_installer/
+*.spec
+
+# 运行时生成
+logs/
+config.json
+debug.log
+*_error.log
+
+# 临时
+_tmp/
+*.tmp

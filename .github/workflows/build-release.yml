@@ -1,0 +1,80 @@
+name: build-release
+
+# 打 tag（如 v1.0.0）时自动打包绿色版，并作为 Release 附件提供下载
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-voice.txt
+          pip install -r requirements-ja.txt
+          pip install pyinstaller
+
+      # 注意：GitHub Actions 在 Windows 上默认用 PowerShell，不能用 ^ 续行
+      - name: 打包（PyInstaller onedir）
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --windowed --name ValorantDanmaku `
+            --icon assets\app.ico `
+            --add-data "app\ocr\ocr_worker.ps1;app\ocr" `
+            --add-data "assets;assets" `
+            --collect-all faster_whisper --collect-all ctranslate2 --collect-all soundcard `
+            --collect-all tokenizers --collect-all huggingface_hub --collect-submodules app `
+            --hidden-import soundcard --hidden-import comtypes --hidden-import huggingface_hub `
+            run.pyw
+
+      - name: 压缩绿色版
+        shell: pwsh
+        run: Compress-Archive -Path "dist\ValorantDanmaku\*" -DestinationPath "ValorantDanmaku-portable.zip" -CompressionLevel Fastest
+
+      # GitHub 会把非 ASCII 的上传文件名清洗掉（变成 -.zip），所以附件名统一用英文
+      - name: 安装脚本改名（ASCII）
+        shell: pwsh
+        run: Copy-Item "packaging\安装（绿色版解压安装）.bat" "install-portable.bat"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: 瓦罗兰特翻译助手 ${{ github.ref_name }}（暂时提供）
+          files: |
+            ValorantDanmaku-portable.zip
+            install-portable.bat
+          body: |
+            > ⚠️ **暂时提供**：这是打包好的测试版本，功能可用，后续可能调整。
+
+            ## 下载哪个？
+
+            | 文件 | 用法 |
+            | --- | --- |
+            | `ValorantDanmaku-portable.zip`（绿色版） | 解压到任意目录，双击 `ValorantDanmaku.exe` 就能用 |
+            | `install-portable.bat`（选目录安装器） | 和 zip 放同一个文件夹，双击 → 选安装位置 → 自动建桌面快捷方式 |
+
+            ## 语言方向（当前只支持这两种）
+
+            - **队友英文 / 日文 → 中文**：聊天文字 OCR + 队友语音识别，都翻成中文弹幕
+            - **你说中文 → 英文 / 日文**：麦克风识别后给出日/英译文，供复制到游戏聊天框
+
+            本工具面向**中文玩家**使用，界面也是中文。
+
+            > 安装包**不含语音模型和语言包**。第一次打开后到左侧「模型」页按需下载：
+            > - 语音包：推荐 `large-v3-turbo`（1.6GB）
+            > - 语言包：日语点「安装日语包」（约 20MB）；英语/中文用 Windows 自带 OCR
+            > - 显卡加速：可选，装了语音才走 GPU
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
