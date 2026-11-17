@@ -9,6 +9,7 @@ from ..config import Config
 from ..ocr.chat_reader import ChatEvent
 from .asr import Asr
 from .capture import LoopbackCapture
+from .filters import is_agent_voice_line
 from .vad import Segmenter
 
 
@@ -32,6 +33,8 @@ class VoiceListener:
         self.note = ""
         self.utterances = 0
         self._paused = threading.Event()
+        self._chat_rms = 0.0
+        self.filtered = 0
         self.active = threading.Event()
         self.active.set()
 
@@ -99,6 +102,11 @@ class VoiceListener:
             text = res["text"]
             if len(text) < 2:
                 continue
+            # 英雄台词（"Watch this!" 之类）不算队友说话，丢掉
+            if is_agent_voice_line(text, audio, self._chat_rms, self.cfg):
+                self.filtered += 1
+                continue
+            self._update_rms(audio)
             ev = ChatEvent("voice", "", text, res["lang"])
             ev.elapsed = time.time() - t0  # type: ignore[attr-defined]
             self.out.put(ev)

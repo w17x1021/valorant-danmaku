@@ -30,7 +30,7 @@ def _mic_devices() -> list[str]:
 
 
 class SettingsDialog(RoundedWindow):
-    W, H = 470, 884
+    W, H = 470, 920
 
     def __init__(self, parent, app):
         self.app = app
@@ -154,6 +154,14 @@ class SettingsDialog(RoundedWindow):
             row=r, column=1, sticky="w", pady=4)
         r += 1
 
+        self._row(frm, r, "过滤英雄台词")
+        self.agent_filter_var = tk.BooleanVar(
+            value=bool(getattr(self.cfg, "filter_agent_lines", True)))
+        ttk.Checkbutton(frm, text="不翻译角色语音（Watch this! 之类）",
+                        variable=self.agent_filter_var).grid(
+            row=r, column=1, sticky="w", pady=4)
+        r += 1
+
         tk.Frame(frm, bg=BORDER, height=1).grid(row=r, column=0, columnspan=2,
                                                 sticky="ew", pady=10)
         r += 1
@@ -202,6 +210,10 @@ class SettingsDialog(RoundedWindow):
         cfg.mic_device = None if mic == DEFAULT_DEVICE else mic
         cfg.asr_model = self.asr_model_var.get().strip() or cfg.asr_model
         cfg.display_mode = DISPLAY_MODES.get(self.mode_var.get(), old_mode)
+        try:
+            cfg.filter_agent_lines = bool(self.agent_filter_var.get())
+        except Exception:  # noqa: BLE001
+            pass
         try:
             cfg.ocr_interval_ms = max(80, int(self.interval_var.get()))
         except ValueError:

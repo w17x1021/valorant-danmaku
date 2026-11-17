@@ -79,6 +79,8 @@ class Config:
     asr_languages: list[str] = field(default_factory=lambda: ["en", "ja", "zh"])
     vad_threshold: float = 0.010                  # 语音能量阈值（自适应底噪的倍数基准）
     vad_silence_ms: int = 400                     # 静音多久算一句结束
+    filter_agent_lines: bool = True               # 过滤英雄台词（"Watch this!" 之类）
+    agent_line_gain: float = 2.4                  # 比队友音量大这么多倍就算台词
     vad_min_ms: int = 450                         # 太短的片段丢弃
     vad_max_s: float = 14.0
 
