@@ -2,7 +2,7 @@
 chcp 936 >nul
 title 上传到 GitHub
 cd /d "%~dp0"
-set "REPO=https://github.com/w17x1021/-.git"
+set "REPO=https://github.com/w17x1021/valorant-danmaku.git"
 
 echo ============================================
 echo   上传 瓦罗兰特翻译助手 到 GitHub
