@@ -642,6 +642,18 @@ class App:
             pass
         self._models_win = ModelManager(self.panel, self)
 
+    def open_downloads(self) -> None:
+        """下载队列：所有下载任务的进度 / 速度都看这个窗口。"""
+        from .ui.downloads import DownloadsWindow
+        try:
+            win = getattr(self, "_downloads_win", None)
+            if win is not None and win.winfo_exists():
+                win.lift()
+                return
+        except tk.TclError:
+            pass
+        self._downloads_win = DownloadsWindow(self.panel, self)
+
     def open_settings(self) -> None:
         SettingsDialog(self.panel, self)
 

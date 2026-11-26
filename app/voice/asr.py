@@ -30,6 +30,9 @@ HALLUCINATIONS = {
 }
 PUNCT_RE = re.compile(r"[^\w\u3040-\u30ff\u3400-\u9fff]+")
 
+# 配置里点的模型本机没装时，按这个顺序退到已经下载好的
+FALLBACK_ORDER = ("small", "base", "tiny", "medium", "large-v3-turbo", "large-v3")
+
 # 各语言的「游戏词表」提示，用来给解码器打底
 PROMPTS = {
     "zh": ("以下是简体中文普通话的瓦罗兰特游戏语音：A点、B点、C点、中路、绕后、"
@@ -49,7 +52,7 @@ def _clean(text: str) -> str:
 
 
 def _setup_cuda_dlls() -> None:
-    """pip 装的 cuBLAS/cuDNN 在 Windows 上不在 DLL 搜索路径里，手动加进去。
+    r"""pip 装的 cuBLAS/cuDNN 在 Windows 上不在 DLL 搜索路径里，手动加进去。
 
     打包成 exe 后位置变成 <程序目录>\_internal\nvidia\...，这里两种都找。
     """
@@ -90,28 +93,52 @@ class Asr:
         self._last_lang = ""
 
     # ------------------------------------------------------------------
-    def _resolve_model(self) -> str:
-        """优先用导入的目录，其次找本地快照，最后交给 faster-whisper 下载。"""
+    def _installed(self, name: str) -> Path | None:
+        """本机已下载、文件完整的模型快照。
+
+        只有 refs/ 或 trees/ 的半截目录（下载中断 / 只拉到元数据）不算数，
+        否则界面会显示「已拥有」，实际一加载就报错。
+        """
+        try:
+            if not self.model_dir.exists():
+                return None
+            for d in sorted(self.model_dir.glob("models--*")):
+                if not d.name.lower().endswith("-" + name.lower()):
+                    continue
+                snaps = d / "snapshots"
+                if not snaps.is_dir():
+                    continue
+                for sub in sorted(snaps.iterdir(), reverse=True):
+                    if (sub / "model.bin").is_file() and (sub / "config.json").is_file():
+                        return sub
+        except OSError:
+            pass
+        return None
+
+    def _pick_local_model(self) -> Path | None:
+        """挑一个本机能直接用的模型：导入目录 > 配置的 > 已下载的别的。
+
+        绝不在启动时偷偷联网下几百 MB～几 GB：下载一律走「模型 → 下载」，
+        那里有队列、进度条和速度。
+        """
         custom = (getattr(self.cfg, "asr_model_path", "") or "").strip()
         if custom:
             p = Path(custom)
-            if (p / "model.bin").exists() and (p / "config.json").exists():
-                return str(p)
-        name = str(getattr(self.cfg, "asr_model", "small") or "small")
-        if self.model_dir.exists():
-            for d in sorted(self.model_dir.glob(f"models--*{name}*")):
-                snap = d / "snapshots"
-                if snap.is_dir():
-                    subs = sorted(snap.iterdir())
-                    if subs:
-                        return str(subs[-1])
-        return name
-
-    def _local_only(self) -> bool:
-        try:
-            return any(self.model_dir.glob("models--*"))
-        except OSError:
-            return False
+            if (p / "model.bin").is_file() and (p / "config.json").is_file():
+                return p
+        wanted = str(getattr(self.cfg, "asr_model", "small") or "small")
+        found = self._installed(wanted)
+        if found is not None:
+            return found
+        for name in FALLBACK_ORDER:
+            if name == wanted:
+                continue
+            found = self._installed(name)
+            if found is not None:
+                self.cfg.asr_model = name
+                self.on_status("loading", f"{wanted} 还没下载，先用本机已有的 {name}")
+                return found
+        return None
 
     def ensure_loaded(self, timeout: float = 600.0) -> bool:
         if self.model is not None:
@@ -120,7 +147,16 @@ class Asr:
             if self.model is not None:
                 return True
             self.loading = True
-            self.on_status("loading", "正在加载语音模型（首次约 30 秒）…")
+            self.on_status("loading", "正在加载语音模型…")
+
+            target = self._pick_local_model()
+            if target is None:
+                self.loading = False
+                self.error = "语音模型还没下载"
+                self.on_status("missing",
+                               "语音模型还没下载：到「模型 → 语音包」下载一个（有进度条）")
+                return False
+
             from faster_whisper import WhisperModel
 
             dev_cfg = str(getattr(self.cfg, "asr_device", "auto") or "auto").lower()
@@ -132,36 +168,20 @@ class Asr:
                 plan.append(("cpu", "int8" if comp_cfg == "auto" else comp_cfg))
 
             self.model_dir.mkdir(parents=True, exist_ok=True)
-            local_only = self._local_only()
             last_err = ""
             for device, compute in plan:
                 if device == "cuda":
                     _setup_cuda_dlls()
                 try:
-                    self.model = WhisperModel(
-                        self._resolve_model(), device=device, compute_type=compute,
-                        download_root=str(self.model_dir), local_files_only=local_only)
+                    self.model = WhisperModel(str(target), device=device,
+                                              compute_type=compute,
+                                              local_files_only=True)
                     self.device_used, self.compute_used = device, compute
                     break
                 except Exception as exc:  # noqa: BLE001
                     last_err = f"{device}: {type(exc).__name__}: {exc}"
                     self.model = None
                     continue
-
-            if self.model is None and str(getattr(self.cfg, "asr_model", "")) != "small":
-                # 新模型加载失败（下载不全 / 显存不够）时退回 small，保证还能用
-                for device, compute in plan:
-                    try:
-                        self.model = WhisperModel("small", device=device,
-                                                  compute_type=compute,
-                                                  download_root=str(self.model_dir),
-                                                  local_files_only=local_only)
-                        self.device_used, self.compute_used = device, compute
-                        self.cfg.asr_model = "small"
-                        break
-                    except Exception:  # noqa: BLE001
-                        self.model = None
-                        continue
 
             self.loading = False
             if self.model is None:

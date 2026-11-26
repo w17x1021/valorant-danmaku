@@ -43,10 +43,10 @@ echo.
 echo [+] 代码已推送。
 echo.
 echo 下一步（可选）：打一个版本标签，GitHub 会自动构建绿色版并放到 Releases
-echo     继续按任意键就打标签 v1.0.0
+echo     继续按任意键就打标签 v1.0
 pause >nul
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.0
+git push origin v1.0
 if errorlevel 1 (
   echo [提示] 标签推送失败（可能已经存在），不影响代码。
 ) else (

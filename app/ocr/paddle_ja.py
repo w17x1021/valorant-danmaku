@@ -21,6 +21,7 @@ import numpy as np
 from PIL import Image
 
 from ..config import Config, project_root
+from ..downloads import dir_size
 from .win_ocr import OcrLine
 
 KANA = set(range(0x3040, 0x30FF)) | set(range(0x31F0, 0x31FF))
@@ -160,3 +161,105 @@ def _ascii_ratio(text: str) -> float:
         return 0.0
     letters = sum(1 for c in text if c.isascii() and c.isalnum())
     return letters / max(1, len(text))
+
+
+# ----------------------------------------------------------------------
+# 日语语言包的安装（依赖 + 模型），给「模型管理」和下载队列用
+def paddle_available() -> bool:
+    """paddlex 能不能 import（源码版没装依赖时是 False）。"""
+    try:
+        import importlib.util
+        return importlib.util.find_spec("paddlex") is not None
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def pack_dir(cfg: Config) -> Path:
+    from .. import models as ml
+    return ml.paddle_dir(cfg) / "official_models" / "PP-OCRv5_mobile_rec"
+
+
+def pack_ready(cfg: Config) -> bool:
+    return pack_dir(cfg).is_dir()
+
+
+def install_pack(cfg: Config, task=None) -> Path:
+    """确保依赖可用并把 PP-OCRv5_mobile_rec 下下来，返回模型目录。
+
+    paddlex 的下载没有进度回调，所以这里盯着缓存目录的大小变化，
+    把「已下载多少 MB」和速度报给下载队列。
+    """
+    from .. import models as ml
+
+    _prepare_cache_env()
+    pdx = ml.paddle_dir(cfg)          # 用户自定义过目录时以配置为准
+    pdx.mkdir(parents=True, exist_ok=True)
+    os.environ["PADDLE_PDX_CACHE_HOME"] = str(pdx)
+    if not paddle_available():
+        raise RuntimeError("缺少 PaddleOCR 依赖，请双击「安装日语识别.bat」后再试")
+
+    # paddlex 会先把文件下到 HF 缓存、最后才搬进 official_models，
+    # 所以盯的目录要包含缓存根，否则进度会一直停在 0 然后突然跳到 100%
+    cache = project_root() / "cache"
+    if pdx == cache or cache in pdx.parents:
+        watched = [cache]
+    else:
+        watched = [pdx, cache]
+
+    def total_size() -> int:
+        return sum(dir_size(d) for d in watched)
+
+    stop = threading.Event()
+    base = total_size()
+
+    def watch() -> None:
+        last = 0
+        started = time.time()
+        while not stop.wait(0.4):
+            size = total_size() - base
+            if task is not None:
+                # PaddleX 是下完才一次性落盘，只能靠「已用 N 秒」让人知道它还活着
+                if size > last:
+                    last = size
+                    task.set_done(size)
+                secs = int(time.time() - started)
+                if secs % 2 == 0:
+                    task.set_note(f"下载 PP-OCRv5_mobile_rec（约 17MB）… 已 {secs} 秒")
+
+    watcher = threading.Thread(target=watch, daemon=True, name="ja-pack-size")
+    watcher.start()
+    if task is not None:
+        task.set_note("下载 PP-OCRv5_mobile_rec（约 10~20MB）…")
+    try:
+        from paddlex import create_model
+        model = create_model("PP-OCRv5_mobile_rec")
+        del model
+    finally:
+        stop.set()
+        if task is not None:
+            size = max(0, total_size() - base)
+            task.set_done(size)
+            if size:
+                task.set_total(size)     # 收尾时把进度条补满
+    target = pack_dir(cfg)
+    if not target.is_dir():
+        raise RuntimeError("模型没下完整，重试一次")
+    return target
+
+
+def install_async(cfg: Config, done=None):
+    """排进下载队列，返回 Task（见 app.downloads）。"""
+    from ..downloads import manager
+
+    def job(task):
+        try:
+            path = install_pack(cfg, task=task)
+        except Exception as exc:  # noqa: BLE001
+            if done:
+                done(False, str(exc))
+            raise
+        if done:
+            done(True, str(path))
+
+    return manager().add("日语识别包", job,
+                         detail="PaddleOCR PP-OCRv5 · 识别模型（约 10~20MB）")

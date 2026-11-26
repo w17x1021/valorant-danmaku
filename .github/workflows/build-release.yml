@@ -1,6 +1,6 @@
 name: build-release
 
-# 打 tag（如 v1.0.0）时自动打包绿色版，并作为 Release 附件提供下载
+# 打 tag（如 v1.0）时自动打包绿色版，并作为 Release 附件提供下载
 on:
   push:
     tags: ["v*"]
@@ -27,22 +27,17 @@ jobs:
           pip install -r requirements-ja.txt
           pip install pyinstaller
 
-      # 注意：GitHub Actions 在 Windows 上默认用 PowerShell，不能用 ^ 续行
-      - name: 打包（PyInstaller onedir）
+      # 和本地打出来的包用同一套参数，避免「本地能用、CI 出来少东西」
+      - name: 打包（tools/build_exe.ps1）
         shell: pwsh
         run: |
-          python -m PyInstaller --noconfirm --windowed --name ValorantDanmaku `
-            --icon assets\app.ico `
-            --add-data "app\ocr\ocr_worker.ps1;app\ocr" `
-            --add-data "assets;assets" `
-            --collect-all faster_whisper --collect-all ctranslate2 --collect-all soundcard `
-            --collect-all tokenizers --collect-all huggingface_hub --collect-submodules app `
-            --hidden-import soundcard --hidden-import comtypes --hidden-import huggingface_hub `
-            run.pyw
+          ./tools/build_exe.ps1 -Python python -OutDir "$PWD\build"
 
       - name: 压缩绿色版
         shell: pwsh
-        run: Compress-Archive -Path "dist\ValorantDanmaku\*" -DestinationPath "ValorantDanmaku-portable.zip" -CompressionLevel Fastest
+        run: |
+          Compress-Archive -Path "build\dist\ValorantDanmaku\*" `
+            -DestinationPath "ValorantDanmaku-portable.zip" -CompressionLevel Optimal
 
       # GitHub 会把非 ASCII 的上传文件名清洗掉（变成 -.zip），所以附件名统一用英文
       - name: 安装脚本改名（ASCII）
@@ -51,30 +46,40 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
-          name: 瓦罗兰特翻译助手 ${{ github.ref_name }}（暂时提供）
+          name: 瓦罗兰特翻译助手 V1.0
           files: |
             ValorantDanmaku-portable.zip
             install-portable.bat
           body: |
-            > ⚠️ **暂时提供**：这是打包好的测试版本，功能可用，后续可能调整。
+            ## V1.0
 
-            ## 下载哪个？
+            队友英文/日文 → 中文弹幕；你说中文 → 日/英译文，一键复制进游戏聊天框。
+
+            ### 本次改动
+
+            - **新增下载队列**：语音包、显卡加速、日语包统一排队，实时显示进度条、速度、剩余时间，可取消、可断点续传，线路失败自动切换
+            - **启动不再偷偷下载模型**：以前第一次打开会在后台拉 1.6GB 的 `large-v3-turbo`，现在没装就明确提示「还没下载」，等你点下载
+            - **修复「半截模型显示已拥有」**：只有 `model.bin` + `config.json` 都齐了才算装了
+            - **修复日语包装不上**：安装版里的类名写错导致 ImportError；现在点「安装日语包」直接进下载队列（不需要管理员、不走 Windows 更新）
+            - **修复日语状态误报**：装了 Windows 日语 OCR 也会显示「可用」
+            - **没下载的模型不再显示「使用」按钮**
+            - 新增 `tools/build_exe.ps1`：一条命令重新打包，本地和 CI 用同一套参数
+
+            ### 下载哪个？
 
             | 文件 | 用法 |
             | --- | --- |
             | `ValorantDanmaku-portable.zip`（绿色版） | 解压到任意目录，双击 `ValorantDanmaku.exe` 就能用 |
             | `install-portable.bat`（选目录安装器） | 和 zip 放同一个文件夹，双击 → 选安装位置 → 自动建桌面快捷方式 |
 
-            ## 语言方向（当前只支持这两种）
+            ### 第一次打开
 
-            - **队友英文 / 日文 → 中文**：聊天文字 OCR + 队友语音识别，都翻成中文弹幕
-            - **你说中文 → 英文 / 日文**：麦克风识别后给出日/英译文，供复制到游戏聊天框
+            安装包**不含语音模型、语言包和显卡加速库**（合计 3GB，放不进仓库），到左侧「模型」页按需下载：
 
-            本工具面向**中文玩家**使用，界面也是中文。
+            - 语音包：推荐 `large-v3-turbo`（1.6GB），点「下载」会弹出下载队列
+            - 显卡加速：可选（约 1.6GB），装了语音才走 GPU；不装用 CPU，慢 5~10 倍
+            - 日语：多数机器 Windows 自带 OCR 就支持，不支持时点「安装日语包」（约 17MB）
 
-            > 安装包**不含语音模型和语言包**。第一次打开后到左侧「模型」页按需下载：
-            > - 语音包：推荐 `large-v3-turbo`（1.6GB）
-            > - 语言包：日语点「安装日语包」（约 20MB）；英语/中文用 Windows 自带 OCR
-            > - 显卡加速：可选，装了语音才走 GPU
+            > 本工具面向**中文玩家**使用，界面也是中文。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -3,7 +3,7 @@
 
 #define AppName "瓦罗兰特翻译助手"
 #define AppNameEn "ValorantDanmaku"
-#define AppVer "1.0.0"
+#define AppVer "1.0"
 #define AppExe "ValorantDanmaku.exe"
 
 [Setup]

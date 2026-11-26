@@ -68,7 +68,7 @@ class ControlPanel(RoundedWindow):
         bottom = tk.Frame(rail, bg=RAIL)
         bottom.pack(side="bottom", fill="x", pady=(0, 12), padx=9)
         NavItem(bottom, "power", "退出", command=self.app.quit, bg=RAIL).pack(fill="x")
-        self.version_lbl = label(bottom, "v1.0 · 本地运行", size=8, color=TEXT_FAINT, bg=RAIL)
+        self.version_lbl = label(bottom, "V1.0 · 本地运行", size=8, color=TEXT_FAINT, bg=RAIL)
         self.version_lbl.pack(anchor="w", padx=10, pady=(6, 0))
 
         # ---------------- 右侧内容 ----------------

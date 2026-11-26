@@ -4,9 +4,10 @@ setlocal enabledelayedexpansion
 title 安装 瓦罗兰特翻译助手
 cd /d "%~dp0"
 
-set "ZIP=%~dp0瓦罗兰特翻译助手-绿色版.zip"
+set "ZIP=%~dp0ValorantDanmaku-portable.zip"
+if not exist "%ZIP%" set "ZIP=%~dp0瓦罗兰特翻译助手-绿色版.zip"
 if not exist "%ZIP%" (
-  echo 找不到绿色版压缩包：%ZIP%
+  echo 找不到绿色版压缩包（ValorantDanmaku-portable.zip 或 瓦罗兰特翻译助手-绿色版.zip）
   echo 请把本 bat 和 zip 放在同一个文件夹里。
   pause & exit /b 1
 )
@@ -23,7 +24,7 @@ if "%TARGET%"=="" (
 
 set "DEST=%TARGET%\ValorantDanmaku"
 echo 正在安装到：%DEST%
-echo （大约 683 MB，请稍候…）
+echo （大约 850 MB，请稍候…）
 if not exist "%DEST%" mkdir "%DEST%"
 powershell -NoProfile -Command "Expand-Archive -LiteralPath '%ZIP%' -DestinationPath '%DEST%' -Force"
 if not exist "%DEST%\ValorantDanmaku.exe" (

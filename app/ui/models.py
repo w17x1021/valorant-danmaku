@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import subprocess
-import threading
 import tkinter as tk
+from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from .. import models as ml
@@ -31,6 +31,9 @@ class ModelManager(RoundedWindow):
         self.path_lbl = label(head, "", size=8, color=TEXT_FAINT, bg=BG)
         self.path_lbl.pack(side="right")
 
+        self.notice = label(self.body_frame, "", size=8, color=YELLOW, bg=BG)
+        self.notice.pack(anchor="w", pady=(4, 0), fill="x")
+
         self.status = label(self.body_frame, "", size=9, color=TEXT_DIM, bg=BG)
         self.status.pack(side="bottom", anchor="w")
 
@@ -39,15 +42,17 @@ class ModelManager(RoundedWindow):
 
         self.list_box = tk.Frame(self.body_frame, bg=BG)
         self.list_box.pack(fill="both", expand=True, pady=(8, 4))
-        RoundButton(foot, "打开模型文件夹", command=self._open_folder, width=136,
+        RoundButton(foot, "打开模型文件夹", command=self._open_folder, width=124,
                     height=32, kind="ghost", bg=BG).pack(side="left")
-        RoundButton(foot, "从文件夹导入语音包…", command=self._import_voice, width=170,
+        RoundButton(foot, "从文件夹导入语音包…", command=self._import_voice, width=158,
                     height=32, kind="ghost", bg=BG).pack(side="left", padx=(8, 0))
-        RoundButton(foot, "导入语言包…", command=self._import_ocr, width=124, height=32,
+        RoundButton(foot, "导入语言包…", command=self._import_ocr, width=112, height=32,
                     kind="ghost", bg=BG).pack(side="left", padx=(8, 0))
+        RoundButton(foot, "下载队列", command=self._open_queue, width=84, height=32,
+                    kind="outline", bg=BG).pack(side="left", padx=(8, 0))
         RoundButton(foot, "关闭", command=self.destroy, width=88, height=32,
                     kind="primary", bg=BG).pack(side="right")
-        RoundButton(foot, "环境检测", command=self._selfcheck, width=104, height=32,
+        RoundButton(foot, "环境检测", command=self._selfcheck, width=96, height=32,
                     kind="outline", bg=BG).pack(side="right", padx=(0, 8))
 
         self._refresh()
@@ -57,6 +62,7 @@ class ModelManager(RoundedWindow):
         for w in self.list_box.winfo_children():
             w.destroy()
         self.path_lbl.configure(text=f"模型目录：{ml.models_dir(self.cfg)}")
+        self._update_notice()
 
         self._section("语音包（队友语音识别模型）")
 
@@ -69,7 +75,8 @@ class ModelManager(RoundedWindow):
                 desc=f"{pack.size} · 显存 {pack.vram} · {pack.note}",
                 installed=bool(path),
                 used=used,
-                on_use=lambda pid=pack.id: self._use_voice(pid),
+                # 没下载的模型不给「使用」按钮，否则等于选中一个不存在的东西
+                on_use=(lambda pid=pack.id: self._use_voice(pid)) if path else None,
                 on_download=lambda pid=pack.id: self._download(pid),
                 on_delete=lambda pid=pack.id: self._delete(pid),
             )
@@ -91,6 +98,25 @@ class ModelManager(RoundedWindow):
             self._ocr_row(name, ok, note, code)
 
     # ------------------------------------------------------------------
+    def _update_notice(self) -> None:
+        """配置里选中的模型却没装时，明确告诉用户「还没下」，别让人以为已经有了。"""
+        custom = (self.cfg.asr_model_path or "").strip()
+        if custom:
+            if ml.valid_model_dir(Path(custom)):
+                self.notice.configure(text=f"正在用导入的模型：{custom}")
+            else:
+                self.notice.configure(
+                    text=f"导入的模型目录已经失效（{custom}），请重新导入或下载一个")
+            return
+        pack_id = ml.current_pack(self.cfg)
+        pack = ml.PACK_BY_ID.get(pack_id)
+        if pack is not None and not ml.installed_path(self.cfg, pack_id):
+            self.notice.configure(
+                text=f"设置里选的是 {pack.label}，但本机还没下载 —— 点它右边的「下载」"
+                     f"（约 {pack.size}，进度和速度在下载队列里看）")
+        else:
+            self.notice.configure(text="")
+
     def _section(self, text: str) -> None:
         row = tk.Frame(self.list_box, bg=BG)
         row.pack(fill="x", pady=(6, 2))
@@ -152,20 +178,10 @@ class ModelManager(RoundedWindow):
 
     def _install_cuda(self) -> None:
         from .. import cuda_pack
-        self.status.configure(text="开始下载显卡加速包（约 1.6GB，走清华镜像）…")
-        self._refresh()
-
-        def progress(r: float) -> None:
-            self.status.configure(text=f"正在下载显卡加速包… {r * 100:.0f}%")
-
-        def done(ok: bool, info: str) -> None:
-            if ok:
-                self.status.configure(text="显卡加速包装好了，重启程序后语音就走 GPU")
-            else:
-                self.status.configure(text=f"下载失败：{info[:110]}")
-            self._refresh()
-
-        cuda_pack.install_async(done, progress)
+        self.status.configure(text="已把显卡加速包加入下载队列（约 1.6GB，可看进度）…")
+        cuda_pack.install_async(None)
+        self._open_queue()
+        self._watch_queue()
 
     def _selfcheck(self) -> None:
         from .selfcheck_win import SelfCheckWindow
@@ -202,20 +218,10 @@ class ModelManager(RoundedWindow):
         self._refresh()
 
     def _download(self, pack_id: str) -> None:
-        self.status.configure(text=f"开始下载 {pack_id}…")
-        self._refresh()
-
-        def progress(msg: str) -> None:
-            self.status.configure(text=msg)
-
-        def done(ok: bool, info: str) -> None:
-            if ok:
-                self.status.configure(text=f"{pack_id} 下载完成，点「使用」启用")
-            else:
-                self.status.configure(text=f"下载失败：{info[:120]}")
-            self._refresh()
-
-        ml.download_async(pack_id, self.cfg, done, progress)
+        self.status.configure(text=f"已把 {pack_id} 加入下载队列…")
+        ml.download_async(pack_id, self.cfg, done=None)
+        self._open_queue()
+        self._watch_queue()
 
     def _delete(self, pack_id: str) -> None:
         if messagebox.askyesno("删除语音包", f"确定删除 {pack_id}？\n（可以再下载回来）",
@@ -259,28 +265,71 @@ class ModelManager(RoundedWindow):
         self._refresh()
 
     def _install_ja(self) -> None:
-        """装日语语言包：源码运行跑 bat；安装版直接在程序里下模型。"""
-        bat = project_root() / "安装日语识别.bat"
-        if bat.exists():
-            subprocess.Popen(f'start "" "{bat}"', shell=True, cwd=str(project_root()))
-            self.status.configure(text="已打开日语识别安装脚本，按提示装完重启程序")
+        """装日语识别包。
+
+        优先走程序内的 PaddleOCR 离线包（不需要管理员、不走 Windows
+        更新、带进度条）；只有源码版缺依赖时才去跑安装脚本。
+        """
+        from ..ocr import paddle_ja
+        if paddle_ja.paddle_available():
+            self.status.configure(text="已把日语识别包加入下载队列（约 10~20MB）…")
+            paddle_ja.install_async(self.cfg, done=None)
+            self._open_queue()
+            self._watch_queue()
             return
-        self.status.configure(text="正在下载日语识别模型（约 20MB）…")
+        for name in ("安装日语识别-离线.bat", "安装日语识别.bat"):
+            bat = project_root() / name
+            if bat.exists():
+                subprocess.Popen(f'start "" "{bat}"', shell=True,
+                                 cwd=str(project_root()))
+                self.status.configure(
+                    text=f"缺 PaddleOCR 依赖，已打开「{name}」；装完回来再点一次")
+                return
+        self.status.configure(text="缺少 PaddleOCR 依赖，也没找到安装脚本；请重新安装程序")
 
-        def work() -> None:
+    # ------------------------------------------------------------------
+    def _open_queue(self) -> None:
+        """打开下载队列窗口（程序里有就复用）。"""
+        opener = getattr(self.app, "open_downloads", None)
+        if callable(opener):
             try:
-                from ..ocr.paddle_ja import PaddleJaOcr
-                PaddleJaOcr(self.cfg)          # 初始化时会自动下载语言包
-                self.after(0, lambda: self._after_ja(True, ""))
-            except Exception as exc:  # noqa: BLE001
-                msg = str(exc)
-                self.after(0, lambda: self._after_ja(False, msg))
+                opener()
+                return
+            except Exception:  # noqa: BLE001
+                pass
+        from .downloads import DownloadsWindow
+        try:
+            win = getattr(self, "_queue_win", None)
+            if win is not None and win.winfo_exists():
+                win.lift()
+                return
+        except tk.TclError:
+            pass
+        self._queue_win = DownloadsWindow(self, self.app)
 
-        threading.Thread(target=work, daemon=True, name="dl-ja").start()
+    def _watch_queue(self) -> None:
+        """队列跑完后刷新一下列表，让「下载 / 删除」按钮变成正确状态。"""
+        from ..downloads import manager
+        if getattr(self, "_watching", False):
+            return
+        self._watching = True
 
-    def _after_ja(self, ok: bool, err: str) -> None:
-        self.status.configure(text="日语语言包已就绪" if ok else f"下载失败：{err[:110]}")
-        self._refresh()
+        def tick() -> None:
+            try:
+                if not self.winfo_exists():
+                    self._watching = False
+                    return
+                if manager().active_count() == 0:
+                    self._watching = False
+                    self.status.configure(text="下载队列已空闲")
+                    self._refresh()
+                    return
+            except tk.TclError:
+                self._watching = False
+                return
+            self.after(700, tick)
+
+        self.after(700, tick)
 
     def _open_folder(self) -> None:
         path = ml.models_dir(self.cfg)
